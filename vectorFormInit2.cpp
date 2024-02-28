@@ -443,7 +443,7 @@ bool hasTenSecondsPassed (const chrono::steady_clock::time_point& start){
     int main() {
 
     unsigned char responce [1024];
-    unsigned char motorAngle = 0xe0;
+    int motorAngle = 0;
     bool shouldStop = false; //bool to stop after 20seconds of searching for zero angle 
     unsigned char sequenceNumber =0x00;//command sequence counter
     struct timeval tv;//Timeval struct for timeout definition
@@ -940,7 +940,7 @@ bool hasTenSecondsPassed (const chrono::steady_clock::time_point& start){
     std::cin.get();
     
     velPar1 = 0x00;
-    velPar2 = 0x02;
+    velPar2 = 0x01;
 
     velReqCommand = generateVelocityReqCommand(sequenceNumber,velPar1,velPar2);
     sentBytes = sendto(sockfd, velReqCommand.data(), velReqCommand.size(), 0,
@@ -978,7 +978,7 @@ bool hasTenSecondsPassed (const chrono::steady_clock::time_point& start){
     //.........................................
     // Homing sequence
     // Send the PRDVALreq command
-    
+    auto start = chrono::steady_clock::now();
     while (!shouldStop){
 
     auto prdvalReqCommandAngle = generatePrdvalReqCommandAngle
@@ -1017,9 +1017,9 @@ bool hasTenSecondsPassed (const chrono::steady_clock::time_point& start){
     }
     std::cout << std::endl;
 
-    motorAngle = responce[15];
+    motorAngle = (int)responce[16];
      
-    if (motorAngle == 0x00 || motorAngle == 0x01 || motorAngle == 0x02 || motorAngle == 0x03) {
+    if (motorAngle > 1 && motorAngle < 5) {
 
     auto stopReqCommand = generateStopReqCommand(sequenceNumber);
 
@@ -1059,7 +1059,7 @@ bool hasTenSecondsPassed (const chrono::steady_clock::time_point& start){
         }
 
     auto now = chrono::steady_clock::now();
-    if (chrono::duration_cast<chrono::seconds>(now-start).count() >=20) {
+    if (chrono::duration_cast<chrono::seconds>(now-start).count() >=60) {
 
         auto stopReqCommand = generateStopReqCommand(sequenceNumber);
 
@@ -1096,9 +1096,8 @@ bool hasTenSecondsPassed (const chrono::steady_clock::time_point& start){
     break;
     } 
 
-    this_thread::sleep_for(chrono::milliseconds(500));
+    this_thread::sleep_for(chrono::milliseconds(100));
 
-    return 0;
     }
 
 
