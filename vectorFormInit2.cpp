@@ -1017,9 +1017,9 @@ bool hasTenSecondsPassed (const chrono::steady_clock::time_point& start){
     }
     std::cout << std::endl;
 
-    motorAngle = (int)responce[16];
+    //motorAngle = (int)response[16];
      
-    if (motorAngle > 1 && motorAngle < 5) {
+    if ((int)response[16] > 1 && (int)response[16] < 5 && (int)response[17] == 1) {
 
     auto stopReqCommand = generateStopReqCommand(sequenceNumber);
 
