@@ -1,0 +1,120 @@
+#include <iostream>
+#include <cstring>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <vector>
+#include <chrono>
+#include <thread>
+
+using namespace std;
+
+// Function Prototypes
+vector<unsigned char> generateCommand(unsigned char& sequenceNumber, const vector<unsigned char>& parameters);
+void printResponse(const vector<unsigned char>& response);
+void sendCommand(int sockfd, const struct sockaddr_in& addr, const vector<unsigned char>& command);
+vector<unsigned char> receiveResponse(int sockfd, struct sockaddr_in& addr);
+bool waitForHomePosition(int sockfd, const struct sockaddr_in& addr, unsigned char& sequenceNumber, int timeoutSeconds);
+void adjustMotorSpeed(int sockfd, const struct sockaddr_in& addr, unsigned char& sequenceNumber, unsigned char velPar1, unsigned char velPar2);
+
+int main() {
+    // Configuration
+    const char* spinCoaterIp = "192.168.121.200";
+    const int spinCoaterPort = 47999;
+    unsigned char sequenceNumber = 0x00;
+
+    // Create UDP socket
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        cerr << "Error creating socket" << endl;
+        return -1;
+    }
+
+    // Configure spin coater address
+    struct sockaddr_in spinCoaterAddr{};
+    memset(&spinCoaterAddr, 0, sizeof(spinCoaterAddr));
+    spinCoaterAddr.sin_family = AF_INET;
+    spinCoaterAddr.sin_port = htons(spinCoaterPort);
+    inet_pton(AF_INET, spinCoaterIp, &spinCoaterAddr.sin_addr);
+
+    // Initial Command Sequence
+    sendCommand(sockfd, spinCoaterAddr, generateCommand(sequenceNumber, {0xfe, 0x98, 0x01, sequenceNumber, 0x01, 0x00, 0x00, 0x00})); // INITreq
+    sendCommand(sockfd, spinCoaterAddr, generateCommand(sequenceNumber, {0xfe, 0x98, 0x01, sequenceNumber, 0x03, 0x01, 0x00, 0x00})); // VERSIONreq
+
+    // Start Motor
+    adjustMotorSpeed(sockfd, spinCoaterAddr, sequenceNumber, 0x35, 0x85); // Start motor with initial speed
+    this_thread::sleep_for(chrono::seconds(10)); // Wait for 10 seconds
+    adjustMotorSpeed(sockfd, spinCoaterAddr, sequenceNumber, 0x00, 0x01); // Slow down the motor
+
+    // Homing Sequence
+    if (!waitForHomePosition(sockfd, spinCoaterAddr, sequenceNumber, 60)) {
+        cerr << "Failed to find home position within timeout." << endl;
+    }
+
+    close(sockfd); // Close socket
+    return 0;
+}
+
+vector<unsigned char> generateCommand(unsigned char& sequenceNumber, const vector<unsigned char>& parameters) {
+    vector<unsigned char> command = parameters;
+    command[3] = sequenceNumber++; // Set sequence number and increment
+    sequenceNumber %= 256; // Ensure sequence number wraps correctly
+    return command;
+}
+
+void sendCommand(int sockfd, const struct sockaddr_in& addr, const vector<unsigned char>& command) {
+    ssize_t sentBytes = sendto(sockfd, command.data(), command.size(), 0, (const struct sockaddr*)&addr, sizeof(addr));
+    if (sentBytes < 0) {
+        cerr << "Error sending command" << endl;
+    } else {
+        printResponse(command); // Assuming you want to print the command sent
+    }
+}
+
+vector<unsigned char> receiveResponse(int sockfd, struct sockaddr_in& addr) {
+    vector<unsigned char> response(1024); // Adjust buffer size as needed
+    socklen_t addrLen = sizeof(addr);
+    ssize_t receivedBytes = recvfrom(sockfd, response.data(), response.size(), 0, (struct sockaddr*)&addr, &addrLen);
+    if (receivedBytes < 0) {
+        cerr << "Error receiving response" << endl;
+    }
+    response.resize(receivedBytes); // Resize to actual received bytes
+    return response;
+}
+
+bool waitForHomePosition(int sockfd, const struct sockaddr_in& addr, unsigned char& sequenceNumber, int timeoutSeconds) {
+    auto startTime = chrono::steady_clock::now();
+    while (true) {
+        auto command = generateCommand(sequenceNumber, {0xfe, 0x98, 0x01, sequenceNumber, 0x05, 0x0b, 0x08, 0x00, 0x63, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+        sendCommand(sockfd, addr, command);
+        auto response = receiveResponse(sockfd, addr);
+        printResponse(response); // Assuming you want to print the response received
+
+        int motorAngle = response[15]; // Adjust index based on actual response structure
+        if (motorAngle >= 2 && motorAngle <= 4) {
+            sendCommand(sockfd, addr, generateCommand(sequenceNumber, {0xfe, 0x98, 0x01, sequenceNumber, 0x0c, 0x00, 0x00, 0x00})); // STOPreq
+            return true;
+        }
+
+        auto currentTime = chrono::steady_clock::now();
+        if (chrono::duration_cast<chrono::seconds>(currentTime - startTime).count() > timeoutSeconds) {
+            sendCommand(sockfd, addr, generateCommand(sequenceNumber, {0xfe, 0x98, 0x01, sequenceNumber, 0x0c, 0x00, 0x00, 0x00})); // STOPreq
+            return false;
+        }
+
+        this_thread::sleep_for(chrono::milliseconds(500)); // Check every half second
+    }
+}
+
+void adjustMotorSpeed(int sockfd, const struct sockaddr_in& addr, unsigned char& sequenceNumber, unsigned char velPar1, unsigned char velPar2) {
+    auto command = generateCommand(sequenceNumber, {0xfe, 0x98, 0x01, sequenceNumber, 0x0b, 0x08, 0x04, 0x00, velPar1, velPar2, 0x00, 0x00});
+    sendCommand(sockfd, addr, command);
+}
+
+void printResponse(const vector<unsigned char>& response) {
+    for (auto byte : response) {
+        cout << hex << static_cast<int>(byte) << " ";
+    }
+    cout << endl;
+}
